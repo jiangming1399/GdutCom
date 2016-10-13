@@ -5,21 +5,23 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:pppoe_dialer"
         mc:Ignorable="d"
-        Title="PPPoE Dialer" Height="235" Width="290" ResizeMode="NoResize" GlowBrush="LightBlue"
-        SaveWindowPosition="True" ShowIconOnTitleBar="True"
+        Title="GdutCOM" ResizeMode="CanMinimize" GlowBrush="LightBlue"
+        SaveWindowPosition="True" ShowIconOnTitleBar="True" Closing="Window_Closing" Closed="MetroWindow_Closed"
         xmlns:wpf="clr-namespace:MaterialDesignThemes.Wpf;assembly=MaterialDesignThemes.Wpf"
         TextElement.Foreground="{DynamicResource MaterialDesignBody}"
         Background="{DynamicResource MaterialDesignPaper}"
         FontFamily="pack://application:,,,/MaterialDesignThemes.Wpf;component/Resources/Roboto/#Roboto"
-        xmlns:Controls="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro">
+        xmlns:Controls="clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro" VerticalAlignment="Center" Width="280" Height="330" MinHeight="330">
     <Controls:MetroWindow.RightWindowCommands>
         <Controls:WindowCommands>
             <TextBlock><Hyperlink NavigateUri="https://github.com/mchome" RequestNavigate="FollowMe" Foreground="White">Follow Me</Hyperlink></TextBlock>
         </Controls:WindowCommands>
     </Controls:MetroWindow.RightWindowCommands>
     <Grid>
-        <StackPanel Orientation="Vertical" Margin="12, 16, 12, 0">
-            <StackPanel Orientation="Horizontal" Margin="0, 0, 0, 10">
+        
+        <StackPanel Orientation="Vertical" Margin="12,16,12,30">
+            <Image x:Name="image" Height="55" VerticalAlignment="Top" Panel.ZIndex="2" OpacityMask="Black" Source="banner.png"/>
+            <StackPanel Orientation="Horizontal" Margin="0, 15, 0, 10">
                 <Label x:Name="lb1" Content="账号: " Margin="10, 0, 0, 0" />
                 <TextBox x:Name="tb_username" Width="160" Margin="10, 0, 0, 0" />
             </StackPanel>
@@ -27,14 +29,18 @@
                 <Label x:Name="lb2" Content="密码: " Margin="10, 0, 0, 0" />
                 <PasswordBox x:Name="pb_password" Width="160" Margin="10, 0, 0, 0" />
             </StackPanel>
-            <Label x:Name="lb_message" Height="30" Content="请输入账号和密码." HorizontalContentAlignment="Center" HorizontalAlignment="Center" />
-            <StackPanel Orientation="Horizontal" Margin="15">
-                <Button x:Name="dial" Width="80" Margin="15, 0, 30, 0" Content="拨号" HorizontalContentAlignment="Center" Click="dial_Click" />
-                <Button x:Name="hangup" Width="80" Margin="15, 0, 30, 0" Content="注销" HorizontalContentAlignment="Center" Click="hangup_Click" />
+            <StackPanel Orientation="Horizontal" Margin="0, 0, 0, 10" HorizontalAlignment="Center">
+                <CheckBox x:Name="remenber" Content="记住密码" Margin="15,0" Width="80" Click="remenber_Click"/>
+                <CheckBox x:Name="autologin" Content="自动登录" Margin="15,0" Width="80" Click="autologin_Click"/>
+            </StackPanel>
+            <Label x:Name="lb_message" Content="请输入账号和密码." HorizontalContentAlignment="Center" HorizontalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" Margin="15" HorizontalAlignment="Center">
+                <Button x:Name="dial" Width="80" Margin="15,0" Content="拨号" HorizontalContentAlignment="Center" Click="dial_Click" />
+                <Button x:Name="hangup" Width="80" Margin="15,0" Content="注销" HorizontalContentAlignment="Center" Click="hangup_Click" />
             </StackPanel>
         </StackPanel>
 
-        <StatusBar Height="30" VerticalAlignment="Bottom">
+        <StatusBar Height="30" VerticalAlignment="Bottom" Margin="0">
             <Label x:Name="lb_status" Height="30" Foreground="White" />
         </StatusBar>
     </Grid>
