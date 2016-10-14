@@ -210,21 +210,19 @@
   <ItemGroup>
     <PublishFile Include="DotRas">
       <Visible>False</Visible>
-      <Group>
-      </Group>
+      <Group>可选</Group>
       <TargetPath>
       </TargetPath>
-      <PublishState>Prerequisite</PublishState>
+      <PublishState>Include</PublishState>
       <IncludeHash>True</IncludeHash>
       <FileType>Assembly</FileType>
     </PublishFile>
     <PublishFile Include="MahApps.Metro">
       <Visible>False</Visible>
-      <Group>
-      </Group>
+      <Group>可选</Group>
       <TargetPath>
       </TargetPath>
-      <PublishState>Prerequisite</PublishState>
+      <PublishState>Include</PublishState>
       <IncludeHash>True</IncludeHash>
       <FileType>Assembly</FileType>
     </PublishFile>
@@ -248,11 +246,10 @@
     </PublishFile>
     <PublishFile Include="System.Windows.Interactivity">
       <Visible>False</Visible>
-      <Group>
-      </Group>
+      <Group>可选</Group>
       <TargetPath>
       </TargetPath>
-      <PublishState>Prerequisite</PublishState>
+      <PublishState>Include</PublishState>
       <IncludeHash>True</IncludeHash>
       <FileType>Assembly</FileType>
     </PublishFile>
