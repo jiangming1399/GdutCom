@@ -6,7 +6,7 @@
         xmlns:local="clr-namespace:pppoe_dialer"
         mc:Ignorable="d"
         Title="GdutCOM" ResizeMode="CanMinimize" GlowBrush="LightBlue"
-        SaveWindowPosition="True" ShowIconOnTitleBar="True" Closing="Window_Closing" Closed="MetroWindow_Closed"
+        SaveWindowPosition="True" ShowIconOnTitleBar="True" Closing="Window_Closing" Closed="MetroWindow_Closed" StateChanged="MetroWindow_StateChanged"
         xmlns:wpf="clr-namespace:MaterialDesignThemes.Wpf;assembly=MaterialDesignThemes.Wpf"
         TextElement.Foreground="{DynamicResource MaterialDesignBody}"
         Background="{DynamicResource MaterialDesignPaper}"
