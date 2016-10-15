@@ -16,11 +16,16 @@ public class drcom
     int pppoeCount = 1;
 
     public delegate void labelCallback(string status, string message);
-    public labelCallback lbcallback;
+    private labelCallback _lbcallback;
 
-    public drcom()
+    public delegate void reAuthCallback();
+    private reAuthCallback _reAuth;
+
+    public drcom(labelCallback lbcallback,reAuthCallback reAuth)
 	{
-	}
+        _lbcallback = lbcallback;
+        _reAuth = reAuth;
+    }
 
     /// <summary>
     /// 初始化Socket端口
@@ -44,37 +49,32 @@ public class drcom
         catch (SocketException e)
         {
             Console.WriteLine("SocketException:{0}", e);
-            lbcallback("端口绑定异常", "请关闭本客户端并10秒后重试");
+            _lbcallback("端口绑定异常", "请关闭本客户端并10秒后重试");
         }
     }
     /// <summary>
     /// 认证过程
     /// </summary>
     /// <returns>状态</returns>
-    public int auth()
+    public void auth()
     {
         while (true)
         {
-            if (heartbeat() == 0)
-            {
-                lbcallback("异常断开", "正在重连");
-                return 0;
-            }
-            Thread.Sleep(20000);
+            heartbeat();
         }
     }
     /// <summary>
     /// 心跳
     /// </summary>
     /// <returns>结果</returns>
-    private int heartbeat()
+    private void heartbeat()
     {
         while (true)
         {
             //Step 1. 发送握手包
             byte[] packet = generateStartPacket((byte)pppoeCount);
 
-            lbcallback("发送握手包", null);
+            _lbcallback("发送握手包", null);
             Console.WriteLine("pppoe: send challenge request");
 
             try
@@ -90,12 +90,14 @@ public class drcom
             byte[] recvBuff = recv_packet();
             if (recvBuff == null)
             {
-                lbcallback("内部错误，重新开始拨号", null);
-                return 0;
+                _lbcallback("内部错误，重新开始拨号", null);
+                _reAuth();
+                return;
             }
             Console.WriteLine("pppoe: received challenge response");
-            lbcallback("收到握手包", null);
+            _lbcallback("收到握手包", null);
 
+            pppoeCount++;
 
             //Step 3. 发送心跳包
             byte[] seed = new byte[4], sip = new byte[4];
@@ -119,29 +121,30 @@ public class drcom
             {
                 Console.WriteLine("SocketException:{0}", e.Message);
             }
-            lbcallback("第" + (pppoeCount - 1) + "次发送心跳包",null);
+            _lbcallback("第" + (pppoeCount / 2) + "次发送心跳包",null);
             Console.WriteLine("pppoe: send heartbeat request");
 
 
             //Step 4. 接收心跳包
             if (recv_packet() == null)
             {
-                lbcallback(null,"拨号失败，重新拨号中");
+                _lbcallback(null,"拨号失败，重新拨号中");
 
                 Console.WriteLine("pppoe: heartbeat response failed, retry");
                 Console.WriteLine("pppoe: reset idx to 0x01\n");
                 pppoeCount = 1;
                 Thread.Sleep(1000);
-                return 0;
+                _reAuth();
+                return;
             }
             else
             {
                 Console.WriteLine("pppoe: received heartbeat response");
-                lbcallback("第" + (pppoeCount - 1) + "次发送心跳包成功", "拨号成功");
-                break;
+                _lbcallback("第" + (pppoeCount / 2) + "次发送心跳包成功", "拨号成功");
             }
+            pppoeCount++;
+            Thread.Sleep(20000);
         }
-        return 1;
     }
 
     public void exit()

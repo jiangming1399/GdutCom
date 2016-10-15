@@ -39,8 +39,7 @@ namespace pppoe_dialer
                 Console.WriteLine(e.Message);
             }
 
-            drcom = new drcom();
-            drcom.lbcallback += new drcom.labelCallback(changeLabel);
+            drcom = new drcom(new drcom.labelCallback(changeLabel), new drcom.reAuthCallback(reAuth));
             drcom.initSocket();
 
             cfa = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
@@ -81,16 +80,17 @@ namespace pppoe_dialer
 
         private void dial_Click(object sender, RoutedEventArgs e)
         {
+            dial.IsEnabled = false;
             //自动添加\r\n
             string username = "\r\n" + tb_username.Text.Replace("\r", "").Replace("\n", "");
             string password = pb_password.Password.ToString();
             saveConfig();
 
-            authThread = new Thread(() =>
+            Thread PPPoEThread = new Thread(() =>
             {
                 dialme(username, password);
             });
-            authThread.Start();
+            PPPoEThread.Start();
         }
 
         private void hangup_Click(object sender, RoutedEventArgs e)
@@ -132,10 +132,22 @@ namespace pppoe_dialer
             trayIcon.Visible = false;
         }
 
+        private void reAuth()
+        {
+            authThread.Abort();
+            dial_Click(null, null);
+        }
+
         private void dialme(string username, string password)
         {
             try
             {
+                //authThread.Start();
+                this.Dispatcher.Invoke(new Action(() =>
+                {
+                    lb_status.Content = "PPPoE尝试拨号";
+                }));
+
                 RasDialer dialer = new RasDialer();
                 dialer.EntryName = "PPPoEDialer";
                 dialer.PhoneNumber = " ";
@@ -143,50 +155,57 @@ namespace pppoe_dialer
                 dialer.PhoneBookPath = RasPhoneBook.GetPhoneBookPath(RasPhoneBookType.User);
                 dialer.Credentials = new System.Net.NetworkCredential(username, password);
                 dialer.Timeout = 500;
-                while (true)
+
+                RasHandle myras = dialer.Dial();
+                while (myras.IsInvalid)
                 {
-                    RasHandle myras = dialer.Dial();
-                    while (myras.IsInvalid)
+                    this.Dispatcher.Invoke(new Action(() =>
                     {
-                        this.Dispatcher.Invoke(new Action(() =>
-                        {
-                            lb_status.Content = "拨号失败";
-                        }));
-                        return;
-                    }
-                    if (!myras.IsInvalid)
+                        lb_status.Content = "拨号失败";
+                    }));
+                    //return;
+                }
+                if (!myras.IsInvalid)
+                {
+                    this.Dispatcher.Invoke(new Action(() =>
                     {
-                        this.Dispatcher.Invoke(new Action(() =>
-                        {
-                            lb_status.Content = "PPPOE拨号成功! ";
-                        }));
-                        RasConnection conn = RasConnection.GetActiveConnectionByHandle(myras);
-                        RasIPInfo ipaddr = (RasIPInfo)conn.GetProjectionInfo(RasProjectionType.IP);
-                        this.Dispatcher.Invoke(new Action(() =>
-                        {
-                            lb_message.Content = "获得IP： " + ipaddr.IPAddress.ToString();
-                            dial.IsEnabled = false;
-                            hangup.IsEnabled = true;
-                        }));
+                        lb_status.Content = "PPPOE拨号成功! ";
+                    }));
+                    RasConnection conn = RasConnection.GetActiveConnectionByHandle(myras);
+                    RasIPInfo ipaddr = (RasIPInfo)conn.GetProjectionInfo(RasProjectionType.IP);
+                    this.Dispatcher.Invoke(new Action(() =>
+                    {
+                        lb_message.Content = "获得IP： " + ipaddr.IPAddress.ToString();
+                        hangup.IsEnabled = true;
+                    }));
+                    
+                    authThread = new Thread(() =>
+                    {
                         drcom.auth();
-                    }
+                    });
+                    authThread.Start();
+                
                 }
             }
-            catch (Exception)
+            catch (Exception e)
             {
                 this.Dispatcher.Invoke(new Action(() =>
                 {
-                    lb_status.Content = "拨号出现异常";
+                    lb_status.Content = e.Message;
                 }));
+                
             }
         }
 
         private void changeLabel(string status, string message)
         {
-            if (status != null)
-                lb_status.Content = status;
-            if (message != null)
-                lb_message.Content = message;
+            this.Dispatcher.Invoke(new Action(() =>
+            {
+                if (status != null)
+                    lb_status.Content = status;
+                if (message != null)
+                    lb_message.Content = message;
+            }));
         }
 
         private void readConfig()
