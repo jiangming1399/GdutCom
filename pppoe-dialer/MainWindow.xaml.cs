@@ -2,9 +2,13 @@
 using System.Linq;
 using System.Windows;
 using System.Windows.Forms;
+using System.Deployment.Application;
 using DotRas;
 using System.Threading;
 using System.Configuration;
+
+using log4net;
+
 
 namespace pppoe_dialer
 {
@@ -14,7 +18,7 @@ namespace pppoe_dialer
     public partial class MainWindow : MahApps.Metro.Controls.MetroWindow
     {
         drcom drcom;
-        Thread authThread;
+        Thread PPPoEThread;
         Configuration cfa;
 
         private NotifyIcon trayIcon;
@@ -22,9 +26,22 @@ namespace pppoe_dialer
         public MainWindow()
         {
             InitializeComponent();
+
+            LogHelper.SetConfig();
+            LogHelper.WriteLog("初始化组件");
+
             CreateConnect("PPPoEDialer");
             hangup.IsEnabled = false;
 
+            try
+            {
+                lb_status.Content = ApplicationDeployment.CurrentDeployment.CurrentVersion.ToString();
+            }
+            catch
+            {
+
+            }
+            
             try
             {
                 trayIcon = new NotifyIcon();
@@ -37,15 +54,18 @@ namespace pppoe_dialer
             catch (Exception e)
             {
                 Console.WriteLine(e.Message);
+                LogHelper.WriteLog(e.Message, e);
             }
 
-            drcom = new drcom(new drcom.labelCallback(changeLabel), new drcom.reAuthCallback(reAuth));
+            drcom = new drcom(new drcom.labelCallback(changeLabel));
             drcom.initSocket();
 
             cfa = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
             readConfig();
             if ((bool)autologin.IsChecked && dial.IsEnabled)
                 dial_Click(null, null);
+
+            drcom.test();
         }
 
         private void notifyIcon_MouseClick(object sender, System.Windows.Forms.MouseEventArgs e)
@@ -80,13 +100,12 @@ namespace pppoe_dialer
 
         private void dial_Click(object sender, RoutedEventArgs e)
         {
-            dial.IsEnabled = false;
             //自动添加\r\n
             string username = "\r\n" + tb_username.Text.Replace("\r", "").Replace("\n", "");
             string password = pb_password.Password.ToString();
             saveConfig();
 
-            Thread PPPoEThread = new Thread(() =>
+            PPPoEThread = new Thread(() =>
             {
                 dialme(username, password);
             });
@@ -97,22 +116,13 @@ namespace pppoe_dialer
         {
             try
             {
-                authThread.Abort();
-                System.Collections.ObjectModel.ReadOnlyCollection<RasConnection> conList = RasConnection.GetActiveConnections();
-                foreach (RasConnection con in conList)
-                {
-                    con.HangUp();
-                }
-                System.Threading.Thread.Sleep(1000);
-                lb_status.Content = "注销成功";
-                lb_message.Content = "已注销";
-                dial.IsEnabled = true;
-                hangup.IsEnabled = false;
+                PPPoEThread.Abort();
             }
-            catch (Exception)
+            catch(Exception exp)
             {
-                lb_status.Content = "注销出现异常";
+                LogHelper.WriteLog(exp.Message, exp);
             }
+            hangupPPPoE();
         }
 
         private void FollowMe(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
@@ -124,28 +134,39 @@ namespace pppoe_dialer
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
             hangup_Click(null, null);
+            drcom.exit();
         }
 
         private void MetroWindow_Closed(object sender, EventArgs e)
         {
-            drcom.exit();
             trayIcon.Visible = false;
         }
 
-        private void reAuth()
+        /// <summary>
+        /// 拨号
+        /// </summary>
+        /// <param name="username"></param>
+        /// <param name="password"></param>
+        private void dialme(string username, string password)
         {
-            authThread.Abort();
-            dial_Click(null, null);
+            while (true)
+            {
+                bool pppoeResult = dialPPPoE(username, password);
+                if (!pppoeResult) break;
+                drcom.auth();
+                hangupPPPoE();
+            }
         }
 
-        private void dialme(string username, string password)
+        private bool dialPPPoE(string username, string password)
         {
             try
             {
-                //authThread.Start();
+                LogHelper.WriteLog("PPPoE尝试拨号");
                 this.Dispatcher.Invoke(new Action(() =>
                 {
                     lb_status.Content = "PPPoE尝试拨号";
+                    dial.IsEnabled = false;
                 }));
 
                 RasDialer dialer = new RasDialer();
@@ -156,14 +177,17 @@ namespace pppoe_dialer
                 dialer.Credentials = new System.Net.NetworkCredential(username, password);
                 dialer.Timeout = 500;
 
+                dialer.StateChanged += new EventHandler<StateChangedEventArgs>(onStateChange);
+
                 RasHandle myras = dialer.Dial();
                 while (myras.IsInvalid)
                 {
                     this.Dispatcher.Invoke(new Action(() =>
                     {
+                        LogHelper.WriteLog("拨号失败", null);
                         lb_status.Content = "拨号失败";
+                        dial.IsEnabled = true;
                     }));
-                    //return;
                 }
                 if (!myras.IsInvalid)
                 {
@@ -178,25 +202,56 @@ namespace pppoe_dialer
                         lb_message.Content = "获得IP： " + ipaddr.IPAddress.ToString();
                         hangup.IsEnabled = true;
                     }));
-                    
-                    authThread = new Thread(() =>
-                    {
-                        drcom.auth();
-                    });
-                    authThread.Start();
-                
+                    return true;
                 }
+                return false;
             }
             catch (Exception e)
             {
                 this.Dispatcher.Invoke(new Action(() =>
                 {
                     lb_status.Content = e.Message;
+                    dial.IsEnabled = true;
                 }));
-                
+
+                LogHelper.WriteLog(e.Message, e);
+                return false;
             }
         }
 
+        private bool hangupPPPoE()
+        {
+            LogHelper.WriteLog("尝试注销");
+            try
+            {
+                System.Collections.ObjectModel.ReadOnlyCollection<RasConnection> conList = RasConnection.GetActiveConnections();
+                foreach (RasConnection con in conList)
+                {
+                    con.HangUp();
+                }
+                System.Threading.Thread.Sleep(1000);
+                this.Dispatcher.Invoke(new Action(() =>
+                {
+                    lb_status.Content = "注销成功";
+                    lb_message.Content = "已注销";
+                    dial.IsEnabled = true;
+                    hangup.IsEnabled = false;
+                }));
+                return true;
+            }
+            catch (Exception exc)
+            {
+                lb_status.Content = "注销出现异常";
+                LogHelper.WriteLog("注销出现异常" + exc.Message, exc);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 修改主界面标签
+        /// </summary>
+        /// <param name="status"></param>
+        /// <param name="message"></param>
         private void changeLabel(string status, string message)
         {
             this.Dispatcher.Invoke(new Action(() =>
@@ -208,6 +263,10 @@ namespace pppoe_dialer
             }));
         }
 
+
+        /// <summary>
+        /// 读取设置
+        /// </summary>
         private void readConfig()
         {
             try
@@ -222,10 +281,29 @@ namespace pppoe_dialer
             catch (Exception e)
             {
                 Console.WriteLine(e.Message);
+                LogHelper.WriteLog(e.Message, e);
             }
 
         }
 
+
+        /// <summary>
+        /// 状态改变调用
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="e"></param>
+        private void onStateChange(object a, StateChangedEventArgs e)
+        {
+            Console.WriteLine(e.State);
+            LogHelper.WriteLog(e.State.ToString());
+            if (e.State == RasConnectionState.Disconnected)
+                changeLabel(e.State.ToString(), null);
+        }
+
+
+        /// <summary>
+        /// 保存配置
+        /// </summary>
         private void saveConfig()
         {
             if (cfa.AppSettings.Settings.Count > 0)
@@ -267,12 +345,18 @@ namespace pppoe_dialer
             }
         }
 
+
+        /// <summary>
+        /// PPPOE创建新链接
+        /// </summary>
+        /// <param name="ConnectName"></param>
         private void CreateConnect(string ConnectName)
         {
-            RasDialer dialer = new RasDialer();
-            RasPhoneBook book = new RasPhoneBook();
             try
             {
+                RasDialer dialer = new RasDialer();
+                RasPhoneBook book = new RasPhoneBook();
+
                 book.Open(RasPhoneBook.GetPhoneBookPath(RasPhoneBookType.User));
                 if (book.Entries.Contains(ConnectName))
                 {
@@ -292,8 +376,65 @@ namespace pppoe_dialer
             {
                 lb_status.Content = "创建PPPoE连接失败";
                 Console.WriteLine(e.Message);
+                LogHelper.WriteLog(e.Message, e);
             }
         }
 
+    }
+
+    /// <summary>
+    /// 使用LOG4NET记录日志的功能，在WEB.CONFIG里要配置相应的节点
+    /// </summary>
+    public class LogHelper
+    {
+        //log4net日志专用
+        public static readonly log4net.ILog loginfo = log4net.LogManager.GetLogger("loginfo");
+        public static readonly log4net.ILog logerror = log4net.LogManager.GetLogger("logerror");
+
+        public static void SetConfig()
+        {
+            log4net.Config.XmlConfigurator.Configure();
+        }
+
+        /// <summary>
+        /// 普通的文件记录日志
+        /// </summary>
+        /// <param name="info"></param>
+        public static void WriteLog(string info)
+        {
+            if (loginfo.IsInfoEnabled)
+            {
+                try
+                {
+                    loginfo.Info(info);
+                    Console.WriteLine(info);
+                }
+                catch
+                {
+
+                }
+
+            }
+        }
+        /// <summary>
+        /// 错误日志
+        /// </summary>
+        /// <param name="info"></param>
+        /// <param name="se"></param>
+        public static void WriteLog(string info, Exception se)
+        {
+            if (logerror.IsErrorEnabled)
+            {
+                try
+                {
+                    logerror.Error(info, se);
+                }
+                catch
+                {
+
+                }
+
+            }
+        }
     }
 }

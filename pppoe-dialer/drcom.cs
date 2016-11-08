@@ -6,25 +6,24 @@ using System.Threading;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 
+
 public class drcom
 {
-    byte PPPOE_FLAG = 0x2a;
+    byte PPPOE_FLAG = 0x6a;
+    byte KEEP_ALIVE2_FLAG = 0xdc;
+    byte[] SERVIP = { 10, 0, 0, 32 };
 
     private Socket client;
     private IPEndPoint hostipe;
 
-    int pppoeCount = 1;
-
     public delegate void labelCallback(string status, string message);
     private labelCallback _lbcallback;
 
-    public delegate void reAuthCallback();
-    private reAuthCallback _reAuth;
+    private static log4net.ILog log = log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
 
-    public drcom(labelCallback lbcallback,reAuthCallback reAuth)
-	{
+    public drcom(labelCallback lbcallback)
+    {
         _lbcallback = lbcallback;
-        _reAuth = reAuth;
     }
 
     /// <summary>
@@ -50,6 +49,7 @@ public class drcom
         {
             Console.WriteLine("SocketException:{0}", e);
             _lbcallback("端口绑定异常", "请关闭本客户端并10秒后重试");
+            pppoe_dialer.LogHelper.WriteLog(e.Message, e);
         }
     }
     /// <summary>
@@ -58,10 +58,17 @@ public class drcom
     /// <returns>状态</returns>
     public void auth()
     {
-        while (true)
-        {
-            heartbeat();
-        }
+        //heartbeat();
+        Keepalive();
+    }
+
+    public void test()
+    {
+        byte[] sip = { 0x0a, 0x1e, 0x62, 0x15 };
+        byte[] seed = { 0xb7, 0xbf, 0xe7, 0x00 };
+
+        byte[] result = generateHeartbeatPacket(0x8b,sip,seed,false);
+        pppoe_dialer.LogHelper.WriteLog("outData: " + ToHexString(result, result.Length));
     }
     /// <summary>
     /// 心跳
@@ -69,33 +76,43 @@ public class drcom
     /// <returns>结果</returns>
     private void heartbeat()
     {
+        int retry = 0;
+        byte pppoeCount = 0;
+
         while (true)
         {
+            if (retry > 3)
+            {
+                return;
+            }
+
+            pppoeCount++;
+
             //Step 1. 发送握手包
-            byte[] packet = generateStartPacket((byte)pppoeCount);
+            byte[] packet = generateStartPacket(pppoeCount);
 
             _lbcallback("发送握手包", null);
             Console.WriteLine("pppoe: send challenge request");
+            pppoe_dialer.LogHelper.WriteLog("发送握手包");
 
-            try
+            if (sent_packet(packet) < 0)
             {
-                client.SendTo(packet, packet.Length, SocketFlags.None, hostipe);
+                retry++;
+                continue;
             }
-            catch (SocketException e)
-            {
-                Console.WriteLine("SocketException:{0}", e);
-            }
+
 
             //Step 2. 接受握手包
             byte[] recvBuff = recv_packet();
             if (recvBuff == null)
             {
-                _lbcallback("内部错误，重新开始拨号", null);
-                _reAuth();
-                return;
+                //_lbcallback("内部错误，重新开始拨号", null);
+                pppoe_dialer.LogHelper.WriteLog("无法收到握手包");
+                retry++;
+                continue;
             }
-            Console.WriteLine("pppoe: received challenge response");
             _lbcallback("收到握手包", null);
+            pppoe_dialer.LogHelper.WriteLog("收到握手包");
 
             pppoeCount++;
 
@@ -110,47 +127,262 @@ public class drcom
 
             byte[] hbPacket;
             if (pppoeCount > 2)
-                hbPacket = generateHeartbeatPacket((byte)pppoeCount, sip, seed, false);
+                hbPacket = generateHeartbeatPacket(pppoeCount, sip, seed, false);
             else
-                hbPacket = generateHeartbeatPacket((byte)pppoeCount, sip, seed, true);
-            try
-            {
-                client.SendTo(hbPacket, hbPacket.Length, SocketFlags.None, hostipe);
-            }
-            catch (SocketException e)
-            {
-                Console.WriteLine("SocketException:{0}", e.Message);
-            }
-            _lbcallback("第" + (pppoeCount / 2) + "次发送心跳包",null);
-            Console.WriteLine("pppoe: send heartbeat request");
+                hbPacket = generateHeartbeatPacket(pppoeCount, sip, seed, true);
 
+            pppoe_dialer.LogHelper.WriteLog("发送心跳包");
+
+            if (sent_packet(hbPacket) < 0)
+            {
+                retry++;
+                continue;
+            }
+
+            _lbcallback("第" + (pppoeCount / 2) + "次发送心跳包", null);
 
             //Step 4. 接收心跳包
             if (recv_packet() == null)
             {
-                _lbcallback(null,"拨号失败，重新拨号中");
-
-                Console.WriteLine("pppoe: heartbeat response failed, retry");
-                Console.WriteLine("pppoe: reset idx to 0x01\n");
+                _lbcallback(null, "拨号失败，重新拨号中");
+                pppoe_dialer.LogHelper.WriteLog("接收心跳包失败");
                 pppoeCount = 1;
-                Thread.Sleep(1000);
-                _reAuth();
-                return;
+
+                retry++;
+                continue;
             }
             else
             {
                 Console.WriteLine("pppoe: received heartbeat response");
+                pppoe_dialer.LogHelper.WriteLog("收到心跳包");
                 _lbcallback("第" + (pppoeCount / 2) + "次发送心跳包成功", "拨号成功");
+                retry = 0;
             }
-            pppoeCount++;
             Thread.Sleep(20000);
         }
+    }
+
+    private void Keepalive()
+    {
+        byte[] tail = { 0x00, 0x00, 0x00, 0x00 };
+        byte svr_num = 0;
+        int retry = 0;
+
+        byte[] packet =  genKeepalive2(svr_num, tail, 1, true);
+
+        byte[] recvBuff;
+
+        while (true)
+        {
+            _lbcallback("发送心跳包", null);
+            Console.WriteLine("KeepAlive2: send1");
+            pppoe_dialer.LogHelper.WriteLog("KeepAlive2: send1");
+            sent_packet(packet);
+
+            recvBuff = recv_packet();
+            if (recvBuff == null)
+            {
+                //_lbcallback("内部错误，重新开始拨号", null);
+                pppoe_dialer.LogHelper.WriteLog("KeepAlive2: recv1 fail");
+                retry++;
+                continue;
+            }
+
+            if (recvBuff[0] == 0x07 && recvBuff[2] == 0x28)
+            {
+                break;
+            }
+            else if (recvBuff[0] == 0x07 && recvBuff[2] == 0x10)
+            {
+                pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv file, resending..");
+                svr_num++;
+                packet = genKeepalive2(svr_num, tail, svr_num, false);
+            }
+            else
+            {
+                pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv1/unexpected");
+            }
+        }
+        pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv1");
+
+        packet = genKeepalive2( svr_num, tail, 1, false);
+        pppoe_dialer.LogHelper.WriteLog("[keep-alive2] send2");
+        sent_packet(packet);
+
+        
+
+        while (true)
+        {
+            recvBuff = recv_packet();
+
+            if (recvBuff == null)
+            {
+                pppoe_dialer.LogHelper.WriteLog("Recv Error");
+                retry++;
+                continue;
+            }
+
+            if (recvBuff[0] == 0x07)
+            {
+                svr_num++;
+                break;
+            }
+
+            else
+            {
+                pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv2/unexpected");
+            }
+
+        }
+        pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv2");
+
+        for (int i = 0; i < 4; i++)
+        {
+            tail[i] = recvBuff[16 + i];
+        }
+
+        packet = genKeepalive2(svr_num, tail, 3, false);
+        pppoe_dialer.LogHelper.WriteLog("[keep-alive2] send3");
+        sent_packet(packet);
+
+        while (true)
+        {
+            recvBuff = recv_packet();
+            if (recvBuff == null)
+            {
+                pppoe_dialer.LogHelper.WriteLog("Recv Error");
+                retry++;
+                break;
+            }
+            if (recvBuff[0] == 0x07)
+            {
+                svr_num++;
+                break;
+            }
+            else
+            {
+                pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv3/unexpected");
+            }
+        }
+        pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv3");
+
+        for (int i = 0; i < 4; i++)
+        {
+            tail[i] = recvBuff[16 + i];
+        }
+
+        pppoe_dialer.LogHelper.WriteLog("[keep-alive2] keep-alive2 loop was in daemon.");
+
+        byte ser_num_alt = svr_num;
+        while (true)
+        {
+            packet = genKeepalive2( svr_num, tail, 1, false);
+            pppoe_dialer.LogHelper.WriteLog("[keep-alive2] send"+ser_num_alt);
+            sent_packet(packet);
+
+            recvBuff = recv_packet();
+            if (recvBuff == null)
+            {
+                pppoe_dialer.LogHelper.WriteLog("Recv Error");
+                break;
+            }
+            pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv"+ser_num_alt);
+
+            for (int i = 0; i < 4; i++)
+            {
+                tail[i] = recvBuff[16 + i];
+            }
+            ser_num_alt++;
+
+            packet = genKeepalive2(svr_num, tail, 3, false);
+            pppoe_dialer.LogHelper.WriteLog("[keep-alive2] send"+ ser_num_alt);
+            sent_packet(packet);
+            recvBuff = recv_packet();
+            if (recvBuff == null)
+            {
+                pppoe_dialer.LogHelper.WriteLog("Recv Error");
+                break;
+            }
+            pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv"+ ser_num_alt);
+            for (int i = 0; i < 4; i++)
+            {
+                tail[i] = recvBuff[16 + i];
+            }
+            ser_num_alt++;
+
+            Thread.Sleep(10000);
+            //pppoeHeartbeat();
+        }
+    }
+
+    private byte[] genKeepalive2(byte number, byte[] tail, byte type, bool first)
+    {
+        int index = 0;
+        byte[] packet = new byte[40];
+        packet[index++] = 0x07; //header
+        packet[index++] = number; //id
+        packet[index++] = 0x28; //length
+        packet[index++] = 0x00;
+        packet[index++] = 0x0b; //type
+        packet[index++] = type;
+
+        if (first)
+        {
+            packet[index++] = 0x0f;
+            packet[index++] = 0x27;
+        }
+        else
+        {
+            packet[index++] = KEEP_ALIVE2_FLAG;
+            packet[index++] = 0x02;
+        }
+        packet[index++] = 0x2f;
+        packet[index++] = 0x12;
+
+        for (int i = 0; i < 6; i++)
+        {
+            packet[index++] = 0x00; //mac
+        }
+
+        for (int i = 0; i < 4; i++)
+        {
+            packet[index++] = tail[i]; //mac
+        }
+
+        if (type == 3)
+        {
+            int encryptMode = tail[0] % 3;
+            byte[] crc = genCRC(packet, encryptMode);
+
+            for (int i = 0; i < 8; i++)
+            {
+                packet[index++] = crc[i];
+            }
+            for (int i = 0; i < 4; i++)
+            {
+                packet[index++] = SERVIP[i];
+            }
+            for (int i = 0; i < 8; i++)
+            {
+                packet[index++] = 0x00;
+            }
+        }
+        else
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                packet[index++] = 0x00;
+            }
+        }
+
+        return packet;
     }
 
     public void exit()
     {
         client.Close();
     }
+
     /// <summary>
     /// 发送包
     /// </summary>
@@ -158,7 +390,18 @@ public class drcom
     /// <returns>发送结果</returns>
     int sent_packet(byte[] data)
     {
-        int result = client.SendTo(data, data.Length, SocketFlags.None, hostipe);
+        int result = new int();
+        try
+        {
+            result = client.SendTo(data, data.Length, SocketFlags.None, hostipe);
+            pppoe_dialer.LogHelper.WriteLog("sendData: " + ToHexString(data));
+        }
+        catch(Exception e)
+        {
+            Console.WriteLine("SocketException:{0}", e);
+            pppoe_dialer.LogHelper.WriteLog(e.Message, e);
+        }
+        
         if (result < 0)
             Console.WriteLine("Send packet error");
         return result;
@@ -176,13 +419,15 @@ public class drcom
             try
             {
                 int bytes = client.ReceiveFrom(recBytes, 0, recBytes.Length, SocketFlags.None, ref remote);
+                pppoe_dialer.LogHelper.WriteLog("recvData: " + ToHexString(recBytes, bytes));
             }
             catch (SocketException e)
             {
                 Console.WriteLine("SocketException:{0}: {1}", e.ErrorCode, e.Message);
+                pppoe_dialer.LogHelper.WriteLog(e.Message, e);
                 return null;
             }
-
+            
             if (recBytes[0] == 0x4d)
             {
                 //cut_char(recvBuff, (unsigned char *) & realStr, 3);
@@ -350,6 +595,27 @@ public class drcom
         return result;
     }
 
+    string ToHexString(byte[] bytes, int count)
+    {
+        string byteStr = string.Empty;
+        int i = 0;
+        if (bytes != null || bytes.Length > 0)
+        {
+            foreach (var item in bytes)
+            {
+                i++;
+                byteStr += string.Format("{0:X2}", item) + " ";
+                if (i >= count)
+                    break;
+            }
+        }
+        return byteStr;
+    }
+
+    string ToHexString(byte[] bytes)
+    {
+        return ToHexString(bytes, bytes.Length);
+    }
 }
 
 public class MD4 : HashAlgorithm
