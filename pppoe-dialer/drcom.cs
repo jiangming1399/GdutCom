@@ -58,8 +58,8 @@ public class drcom
     /// <returns>状态</returns>
     public void auth()
     {
-        //heartbeat();
-        Keepalive();
+        heartbeat();
+        //Keepalive();
     }
 
     public void test()
@@ -67,7 +67,7 @@ public class drcom
         byte[] sip = { 0x0a, 0x1e, 0x62, 0x15 };
         byte[] seed = { 0xb7, 0xbf, 0xe7, 0x00 };
 
-        byte[] result = generateHeartbeatPacket(0x8b,sip,seed,false);
+        byte[] result = generateHeartbeatPacket(0x8b, sip, seed, false);
         pppoe_dialer.LogHelper.WriteLog("outData: " + ToHexString(result, result.Length));
     }
     /// <summary>
@@ -154,8 +154,8 @@ public class drcom
             else
             {
                 Console.WriteLine("pppoe: received heartbeat response");
-                pppoe_dialer.LogHelper.WriteLog("收到心跳包");
-                _lbcallback("第" + (pppoeCount / 2) + "次发送心跳包成功", "拨号成功");
+                pppoe_dialer.LogHelper.WriteLog("收到心跳包:" + pppoeCount);
+                _lbcallback("拨号成功", "拨号成功");
                 retry = 0;
             }
             Thread.Sleep(20000);
@@ -168,7 +168,7 @@ public class drcom
         byte svr_num = 0;
         int retry = 0;
 
-        byte[] packet =  genKeepalive2(svr_num, tail, 1, true);
+        byte[] packet = genKeepalive2(svr_num, tail, 1, true);
 
         byte[] recvBuff;
 
@@ -205,11 +205,11 @@ public class drcom
         }
         pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv1");
 
-        packet = genKeepalive2( svr_num, tail, 1, false);
+        packet = genKeepalive2(svr_num, tail, 1, false);
         pppoe_dialer.LogHelper.WriteLog("[keep-alive2] send2");
         sent_packet(packet);
 
-        
+
 
         while (true)
         {
@@ -276,8 +276,8 @@ public class drcom
         byte ser_num_alt = svr_num;
         while (true)
         {
-            packet = genKeepalive2( svr_num, tail, 1, false);
-            pppoe_dialer.LogHelper.WriteLog("[keep-alive2] send"+ser_num_alt);
+            packet = genKeepalive2(svr_num, tail, 1, false);
+            pppoe_dialer.LogHelper.WriteLog("[keep-alive2] send" + ser_num_alt);
             sent_packet(packet);
 
             recvBuff = recv_packet();
@@ -286,7 +286,7 @@ public class drcom
                 pppoe_dialer.LogHelper.WriteLog("Recv Error");
                 break;
             }
-            pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv"+ser_num_alt);
+            pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv" + ser_num_alt);
 
             for (int i = 0; i < 4; i++)
             {
@@ -295,7 +295,7 @@ public class drcom
             ser_num_alt++;
 
             packet = genKeepalive2(svr_num, tail, 3, false);
-            pppoe_dialer.LogHelper.WriteLog("[keep-alive2] send"+ ser_num_alt);
+            pppoe_dialer.LogHelper.WriteLog("[keep-alive2] send" + ser_num_alt);
             sent_packet(packet);
             recvBuff = recv_packet();
             if (recvBuff == null)
@@ -303,7 +303,7 @@ public class drcom
                 pppoe_dialer.LogHelper.WriteLog("Recv Error");
                 break;
             }
-            pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv"+ ser_num_alt);
+            pppoe_dialer.LogHelper.WriteLog("[keep-alive2] recv" + ser_num_alt);
             for (int i = 0; i < 4; i++)
             {
                 tail[i] = recvBuff[16 + i];
@@ -396,12 +396,12 @@ public class drcom
             result = client.SendTo(data, data.Length, SocketFlags.None, hostipe);
             pppoe_dialer.LogHelper.WriteLog("sendData: " + ToHexString(data));
         }
-        catch(Exception e)
+        catch (Exception e)
         {
             Console.WriteLine("SocketException:{0}", e);
             pppoe_dialer.LogHelper.WriteLog(e.Message, e);
         }
-        
+
         if (result < 0)
             Console.WriteLine("Send packet error");
         return result;
@@ -427,7 +427,7 @@ public class drcom
                 pppoe_dialer.LogHelper.WriteLog(e.Message, e);
                 return null;
             }
-            
+
             if (recBytes[0] == 0x4d)
             {
                 //cut_char(recvBuff, (unsigned char *) & realStr, 3);
@@ -533,12 +533,13 @@ public class drcom
     {
         int index = 0;
         byte[] result = new byte[8];
+        byte[] crc2 = new byte[4];
         //byte[] mdResult = new byte[20];
 
         switch (type)
         {
             case 0: //default
-                    //20000711
+                //20000711
                 result[index++] = 0xC7;
                 result[index++] = 0x2F;
                 result[index++] = 0x31;
@@ -548,6 +549,28 @@ public class drcom
                 result[index++] = 0x00;
                 result[index++] = 0x00;
                 result[index++] = 0x00;
+
+                for (int i = 0; i < 8; i++)
+                {
+                    for (int j = 0; j < 4; j++)
+                    {
+                        if (i >= 6)
+                            crc2[j] ^= result[4 * (i - 6) + j];
+                        else
+                            crc2[j] ^= data[4 * i + j];
+                        crc2[j] &= 0xFF;
+                    }
+                }
+
+                crc2 = IntToByte(ByteToInt(crc2) * 19680126 & 0xfffffff);
+                index -= 8;
+
+                for(int i=0;i<4; i++)
+                {
+                    result[index + 4] = 0x00;
+                    result[index++] = crc2[i];
+                }
+                
                 break;
             case 1: //md5
                 MD5 md5 = new MD5CryptoServiceProvider();
@@ -615,6 +638,20 @@ public class drcom
     string ToHexString(byte[] bytes)
     {
         return ToHexString(bytes, bytes.Length);
+    }
+
+    Int32 ByteToInt(byte[] data)
+    {
+        return (data[0] | data[1] << 8 | data[2] << 16 | data[3] << 24);
+    }
+    byte[] IntToByte(Int32 data)
+    {
+        byte[] result = new byte[4];
+        result[0] = (byte)(data);
+        result[1] = (byte)(data >> 8);
+        result[2] = (byte)(data >> 16);
+        result[3] = (byte)(data >> 24);
+        return result;
     }
 }
 
